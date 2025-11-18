@@ -39,8 +39,10 @@ env/
 .DS_Store
 Thumbs.db
 
-# Project specific
-chroma_db/
+# Project specific - ignore contents but keep folders
+chroma_db/*
+!chroma_db/.gitkeep
+
 storage/*.json
 !storage/.gitkeep
 
