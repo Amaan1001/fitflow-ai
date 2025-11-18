@@ -1,0 +1,32 @@
+{
+  "gyms": [
+    {
+      "gym_id": "demo_gym_01",
+      "gym_name": "FitFlow Gym",
+      "equipment": [
+        "barbell",
+        "dumbbells",
+        "flat bench",
+        "adjustable bench",
+        "squat rack",
+        "leg press machine",
+        "leg curl machine",
+        "leg extension machine",
+        "lat pulldown machine",
+        "cable machine",
+        "rope attachment",
+        "pull-up bar",
+        "dip bars",
+        "treadmill",
+        "stationary bike",
+        "rowing machine",
+        "elliptical machine",
+        "mat",
+        "jump rope",
+        "battle ropes"
+      ],
+      "location": "New York, NY",
+      "member_count": 487
+    }
+  ]
+}

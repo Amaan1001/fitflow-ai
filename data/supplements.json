@@ -1,0 +1,64 @@
+{
+  "supplements": [
+    {
+      "id": "supp001",
+      "name": "Whey Protein Powder",
+      "category": "protein",
+      "price": 49.99,
+      "description": "High-quality whey protein for muscle recovery and growth",
+      "recommended_for": ["muscle_gain", "strength"],
+      "image_url": "https://images.unsplash.com/photo-1579722821273-0f6c7d3b9d8f?w=200",
+      "benefits": ["Supports muscle growth", "Faster recovery", "Convenient protein source"]
+    },
+    {
+      "id": "supp002",
+      "name": "Creatine Monohydrate",
+      "category": "performance",
+      "price": 29.99,
+      "description": "Scientifically proven to increase strength and power output",
+      "recommended_for": ["muscle_gain", "strength"],
+      "image_url": "https://images.unsplash.com/photo-1593095948071-474c5cc2989d?w=200",
+      "benefits": ["Increased strength", "Better performance", "Muscle growth support"]
+    },
+    {
+      "id": "supp003",
+      "name": "Pre-Workout Energy",
+      "category": "energy",
+      "price": 39.99,
+      "description": "Boost energy and focus for intense training sessions",
+      "recommended_for": ["strength", "general_fitness", "weight_loss"],
+      "image_url": "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=200",
+      "benefits": ["Increased energy", "Better focus", "Enhanced endurance"]
+    },
+    {
+      "id": "supp004",
+      "name": "BCAA Recovery",
+      "category": "recovery",
+      "price": 34.99,
+      "description": "Branched-chain amino acids for faster muscle recovery",
+      "recommended_for": ["muscle_gain", "strength", "general_fitness"],
+      "image_url": "https://images.unsplash.com/photo-1607962837359-5e7e89f86776?w=200",
+      "benefits": ["Faster recovery", "Reduced soreness", "Supports muscle maintenance"]
+    },
+    {
+      "id": "supp005",
+      "name": "Fat Burner",
+      "category": "weight_loss",
+      "price": 44.99,
+      "description": "Thermogenic formula to support fat loss and metabolism",
+      "recommended_for": ["weight_loss"],
+      "image_url": "https://images.unsplash.com/photo-1584362917165-526a968579e8?w=200",
+      "benefits": ["Supports metabolism", "Increased energy", "Appetite control"]
+    },
+    {
+      "id": "supp006",
+      "name": "Multivitamin",
+      "category": "health",
+      "price": 24.99,
+      "description": "Complete daily vitamin and mineral support",
+      "recommended_for": ["muscle_gain", "strength", "general_fitness", "weight_loss"],
+      "image_url": "https://images.unsplash.com/photo-1550572017-4264c1c3c7b1?w=200",
+      "benefits": ["Overall health support", "Fills nutritional gaps", "Immune system boost"]
+    }
+  ]
+}
