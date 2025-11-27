@@ -13,9 +13,16 @@ WORKOUT_LOGS_FILE = STORAGE_DIR / "workout_logs.json"
 
 STORAGE_DIR.mkdir(exist_ok=True)
 
-# Ollama settings
-OLLAMA_MODEL = "llama3.1"
-OLLAMA_BASE_URL = "http://localhost:11434"
+# LLM settings
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")  # "ollama" or "openai"
+
+# Ollama settings (for local development)
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+# OpenAI settings (for cloud deployment)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
 
 # ChromaDB settings
 CHROMA_PERSIST_DIR = str(BASE_DIR / "chroma_db")

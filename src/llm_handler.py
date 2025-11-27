@@ -1,19 +1,44 @@
 from typing import List, Dict, Optional
 from langchain_community.chat_models import ChatOllama
-from config import OLLAMA_MODEL, OLLAMA_BASE_URL
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from config import LLM_PROVIDER, OLLAMA_MODEL, OLLAMA_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL
 
 
 class LLMHandler:
-    def __init__(self, model: str = OLLAMA_MODEL):
-        self.model = model
-        # Uses the new official LCEL-compatible Ollama wrapper
-        self.llm = ChatOllama(model=model, base_url=OLLAMA_BASE_URL)
+    def __init__(self):
+        """Initialize LLM based on provider configuration"""
+        if LLM_PROVIDER == "openai":
+            if not OPENAI_API_KEY:
+                raise ValueError("OPENAI_API_KEY environment variable is required when using OpenAI provider")
+            self.llm = ChatOpenAI(
+                model=OPENAI_MODEL,
+                api_key=OPENAI_API_KEY,
+                temperature=0.7
+            )
+            self.provider = "openai"
+        else:  # Default to ollama
+            self.llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
+            self.provider = "ollama"
         # We manage memory ourselves now (ConversationBufferMemory no longer exists)
         self.chat_history: List[Dict[str, str]] = []
 
     def _call_llm(self, messages: List[Dict[str, str]]) -> str:
         """Low-level LLM call using the new LangChain Chat API."""
-        response = self.llm.invoke(messages)
+        # Convert dictionary messages to LangChain BaseMessage objects
+        lc_messages = []
+        for msg in messages:
+            if msg["role"] == "user":
+                lc_messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "system":
+                lc_messages.append(SystemMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                lc_messages.append(AIMessage(content=msg["content"]))
+            else:
+                # Fallback for unknown roles, treat as user message
+                lc_messages.append(HumanMessage(content=msg["content"]))
+
+        response = self.llm.invoke(lc_messages)
         return response.content
 
     def generate_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
