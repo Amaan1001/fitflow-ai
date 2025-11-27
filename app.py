@@ -40,13 +40,32 @@ if 'completed_exercises_today' not in st.session_state:
 
 @st.cache_resource
 def initialize_system():
-    rag_engine = RAGEngine()
-    rag_engine.initialize_database()
-    llm_handler = LLMHandler()
-    workout_gen = WorkoutGenerator(rag_engine, llm_handler)
-    gamification = GamificationEngine(STORAGE_DIR)
-    recovery = RecoveryAnalyzer(STORAGE_DIR)
-    return rag_engine, llm_handler, workout_gen, gamification, recovery
+    try:
+        rag_engine = RAGEngine()
+        rag_engine.initialize_database()
+        llm_handler = LLMHandler()
+        workout_gen = WorkoutGenerator(rag_engine, llm_handler)
+        gamification = GamificationEngine(STORAGE_DIR)
+        recovery = RecoveryAnalyzer(STORAGE_DIR)
+        return rag_engine, llm_handler, workout_gen, gamification, recovery
+    except ValueError as e:
+        # Handle missing API key error
+        st.error("⚠️ **Configuration Error**")
+        st.error(str(e))
+        st.info("""
+        **To fix this issue:**
+        
+        1. Go to your Streamlit Cloud dashboard
+        2. Click on "⚙️ Settings" → "Secrets"
+        3. Add the following:
+        ```
+        OPENAI_API_KEY = "your-openai-api-key-here"
+        ```
+        4. Get your API key from: https://platform.openai.com/api-keys
+        5. Save and restart the app
+        """)
+        st.stop()
+
 
 rag_engine, llm_handler, workout_gen, gamification, recovery = initialize_system()
 

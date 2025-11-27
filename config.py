@@ -13,16 +13,33 @@ WORKOUT_LOGS_FILE = STORAGE_DIR / "workout_logs.json"
 
 STORAGE_DIR.mkdir(exist_ok=True)
 
-# LLM settings
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")  # "ollama" or "openai"
+# LLM settings - Best Practice: Use Streamlit Secrets
+import sys
 
-# Ollama settings (for local development)
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-
-# OpenAI settings (for cloud deployment)
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+# Best practice: Check for Streamlit secrets first (cloud deployment)
+try:
+    import streamlit as st
+    if hasattr(st, 'secrets') and 'OPENAI_API_KEY' in st.secrets:
+        # Running on Streamlit Cloud with secrets configured
+        LLM_PROVIDER = "openai"
+        OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+        OPENAI_MODEL = st.secrets.get("OPENAI_MODEL", "gpt-3.5-turbo")
+        OLLAMA_MODEL = "llama3.1"  # Not used on cloud
+        OLLAMA_BASE_URL = "http://localhost:11434"  # Not used on cloud
+    else:
+        # Local development - use environment variables or defaults
+        LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
+        OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+        OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+        OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
+        OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+except ImportError:
+    # Streamlit not imported yet - use environment variables
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
+    OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # ChromaDB settings
 CHROMA_PERSIST_DIR = str(BASE_DIR / "chroma_db")
