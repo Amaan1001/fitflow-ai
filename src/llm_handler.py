@@ -1,19 +1,44 @@
 from typing import List, Dict, Optional
 from langchain_community.chat_models import ChatOllama
-from config import OLLAMA_MODEL, OLLAMA_BASE_URL
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from config import LLM_PROVIDER, OLLAMA_MODEL, OLLAMA_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL
 
 
 class LLMHandler:
-    def __init__(self, model: str = OLLAMA_MODEL):
-        self.model = model
-        # Uses the new official LCEL-compatible Ollama wrapper
-        self.llm = ChatOllama(model=model, base_url=OLLAMA_BASE_URL)
+    def __init__(self):
+        """Initialize LLM based on provider configuration"""
+        if LLM_PROVIDER == "openai":
+            if not OPENAI_API_KEY:
+                raise ValueError("OPENAI_API_KEY environment variable is required when using OpenAI provider")
+            self.llm = ChatOpenAI(
+                model=OPENAI_MODEL,
+                api_key=OPENAI_API_KEY,
+                temperature=0.7
+            )
+            self.provider = "openai"
+        else:  # Default to ollama
+            self.llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
+            self.provider = "ollama"
         # We manage memory ourselves now (ConversationBufferMemory no longer exists)
         self.chat_history: List[Dict[str, str]] = []
 
     def _call_llm(self, messages: List[Dict[str, str]]) -> str:
         """Low-level LLM call using the new LangChain Chat API."""
-        response = self.llm.invoke(messages)
+        # Convert dictionary messages to LangChain BaseMessage objects
+        lc_messages = []
+        for msg in messages:
+            if msg["role"] == "user":
+                lc_messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "system":
+                lc_messages.append(SystemMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                lc_messages.append(AIMessage(content=msg["content"]))
+            else:
+                # Fallback for unknown roles, treat as user message
+                lc_messages.append(HumanMessage(content=msg["content"]))
+
+        response = self.llm.invoke(lc_messages)
         return response.content
 
     def generate_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
@@ -70,19 +95,30 @@ class LLMHandler:
         """
         return self.generate_response(prompt)
 
-    def generate_exercise_explanation(self, exercise_name: str, exercise_details: str) -> str:
+    def answer_with_exercise_context(self, user_question: str, context: str) -> str:
         prompt = f"""
-            You are a knowledgeable fitness trainer. Explain this exercise clearly.
+You are FitFlow AI, an expert fitness concierge and certified personal trainer.
 
-            Exercise: {exercise_name}
-            Details: {exercise_details}
+You have been provided with specific CONTEXT from the database.
 
-            Include:
-            - 1–2 sentence overview
-            - 3–4 key form points
-            - 2–3 common mistakes
-            - One pro tip
-        """
+**INTERNAL STEPS (DO NOT OUTPUT THESE):**
+1. Analyze if the [CONTEXT] below is directly relevant to the [User Question].
+2. If the context is irrelevant (e.g., user asks about specific physiology but context is about a different exercise), DISCARD the context silently.
+3. If the context is relevant, use it.
+
+**OUTPUT RULES:**
+- **Provide the DIRECT ANSWER only.**
+- **DO NOT** explain your reasoning process (e.g., never say "The context is irrelevant so I will use general knowledge").
+- **DO NOT** mention the context unless you are actively using it to answer the question.
+- If you fall back to general knowledge, just give the fitness advice as if you knew it all along.
+
+**User Question:** {user_question}
+
+**Retrieved Context:**
+{context}
+
+**Answer:**
+"""
         return self.generate_response(prompt)
 
     def recommend_supplements(self, fitness_goal: str, available_supplements: str) -> str:
