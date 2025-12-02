@@ -1,4 +1,4 @@
-# FitFlow AI - Personal Gym 
+# FitFlow AI - Personal Gym Concierge
 
 AI-powered fitness companion that generates personalized workout plans, provides expert guidance, and tracks your progress using LangChain, Ollama, and RAG technology.
 
@@ -20,43 +20,60 @@ AI-powered fitness companion that generates personalized workout plans, provides
 
 ## Installation
 
+### Setup Steps
+
 1. **Clone the repository**
 ```bash
 git clone https://github.com/YOUR_USERNAME/fitflow-ai.git
 cd fitflow-ai
 ```
 
-2. **Create virtual environment**
+2. **Run setup script** (creates necessary directories)
 ```bash
-python -m venv venv
+python setup.py
+```
+
+3. **Create virtual environment**
+```bash
 # Windows:
+python -m venv venv
 venv\Scripts\activate
+
 # Mac/Linux:
+python3 -m venv venv
 source venv/bin/activate
 ```
 
-3. **Install dependencies**
+4. **Install dependencies**
 ```bash
 pip install -r requirements.txt
 ```
 
-4. **Install Ollama**
+5. **Install and start Ollama**
 - Download from https://ollama.ai
 - Pull the model:
 ```bash
 ollama pull llama3.1
 ```
+- Ensure Ollama is running (check http://localhost:11434)
 
-5. **Run the application**
+6. **Run the application**
 ```bash
 streamlit run app.py
 ```
+
+The app will open in your browser at http://localhost:8501
+
+## First Time Setup
+- The ChromaDB database will be initialized automatically on first run
+- Click "Load Demo User" or create your own profile to get started
 
 ## Project Structure
 ```
 fitflow-ai/
 ├── app.py                  # Main Streamlit application
 ├── config.py              # Configuration settings
+├── setup.py               # Initial setup script
 ├── requirements.txt       # Python dependencies
 ├── data/
 │   ├── exercises.json     # Exercise database
@@ -67,21 +84,10 @@ fitflow-ai/
 │   ├── rag_engine.py     # RAG implementation
 │   ├── user_profile.py   # User profile management
 │   └── workout_generator.py  # Workout generation logic
-└── storage/               # User data storage
+├── storage/               # User data storage (created by setup)
+└── chroma_db/            # Vector database (created by setup)
 ```
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
 
 ## License
 
 This project is part of BIA-810 coursework.
-
-## Acknowledgments
-  1. Built with LangChain and Ollama
