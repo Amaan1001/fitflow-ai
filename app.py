@@ -7,10 +7,14 @@ from src.user_profile import UserProfile, WorkoutLog
 from src.rag_engine import RAGEngine
 from src.llm_handler import LLMHandler
 from src.workout_generator import WorkoutGenerator
+from src.gamification import GamificationEngine
+from src.recovery_analyzer import RecoveryAnalyzer
+from src.muscle_heatmap import generate_muscle_heatmap_svg, calculate_coverage_score
+from src.custom_styles import CUSTOM_CSS
 from config import (
-    APP_TITLE, APP_ICON, SESSION_USER_PROFILE, SESSION_CHAT_HISTORY, 
+    APP_TITLE, APP_ICON, DATA_DIR, SESSION_USER_PROFILE, SESSION_CHAT_HISTORY, 
     SESSION_WORKOUT_PLAN, SESSION_CURRENT_DAY, SESSION_WORKOUT_LOGS,
-    USER_PROFILES_FILE, WORKOUT_LOGS_FILE, MOTIVATIONAL_QUOTES
+    USER_PROFILES_FILE, WORKOUT_LOGS_FILE, MOTIVATIONAL_QUOTES, STORAGE_DIR
 )
 import uuid
 
@@ -33,16 +37,44 @@ if SESSION_WORKOUT_LOGS not in st.session_state:
     st.session_state[SESSION_WORKOUT_LOGS] = []
 if 'completed_exercises_today' not in st.session_state:
     st.session_state.completed_exercises_today = set()
+if 'diet_plan' not in st.session_state:
+    st.session_state.diet_plan = None
+if 'quick_question_triggered' not in st.session_state:
+    st.session_state.quick_question_triggered = None
 
 @st.cache_resource
 def initialize_system():
-    rag_engine = RAGEngine()
-    rag_engine.initialize_database()
-    llm_handler = LLMHandler()
-    workout_gen = WorkoutGenerator(rag_engine, llm_handler)
-    return rag_engine, llm_handler, workout_gen
+    try:
+        rag_engine = RAGEngine()
+        rag_engine.initialize_database()
+        llm_handler = LLMHandler()
+        workout_gen = WorkoutGenerator(rag_engine, llm_handler)
+        gamification = GamificationEngine(STORAGE_DIR)
+        recovery = RecoveryAnalyzer(STORAGE_DIR)
+        return rag_engine, llm_handler, workout_gen, gamification, recovery
+    except ValueError as e:
+        # Handle missing API key error
+        st.error("⚠️ **Configuration Error**")
+        st.error(str(e))
+        st.info("""
+        **To fix this issue:**
+        
+        1. Go to your Streamlit Cloud dashboard
+        2. Click on "⚙️ Settings" → "Secrets"
+        3. Add the following:
+        ```
+        OPENAI_API_KEY = "your-openai-api-key-here"
+        ```
+        4. Get your API key from: https://platform.openai.com/api-keys
+        5. Save and restart the app
+        """)
+        st.stop()
 
-rag_engine, llm_handler, workout_gen = initialize_system()
+
+rag_engine, llm_handler, workout_gen, gamification, recovery = initialize_system()
+
+# Apply custom CSS
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 def create_demo_users():
     demo_users = [
@@ -350,7 +382,16 @@ else:
     quote = random.choice(MOTIVATIONAL_QUOTES)
     st.markdown(f'<div class="motivational-quote">💪 {quote}</div>', unsafe_allow_html=True)
     
-    tab1, tab2, tab3, tab4 = st.tabs(["💬 AI Chat", "📅 Today's Workout", "📊 Progress", "💊 Supplements"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "💬 AI Chat", 
+        "📅 Today's Workout", 
+        "🗺️ Muscle Heatmap",
+        "📚 Exercise Library",
+        "🍽️ Diet Plan",
+        "🏆 Achievements",
+        "📊 Progress", 
+        "💊 Supplements"
+    ])
     
     with tab1:
         st.header("Chat with Your AI Trainer")
@@ -363,6 +404,13 @@ else:
                     st.markdown(message["content"])
         
         user_input = st.chat_input("Ask me anything about your workout...")
+
+        if 'quick_question_triggered' not in st.session_state:
+            st.session_state.quick_question_triggered = None
+    
+        if st.session_state.quick_question_triggered:
+            user_input = st.session_state.quick_question_triggered
+            st.session_state.quick_question_triggered = None
         
         if user_input:
             st.session_state[SESSION_CHAT_HISTORY].append({
@@ -393,24 +441,87 @@ else:
                             available_supplements=supp_context
                         )
                     
-                    elif any(word in query_lower for word in ["how", "form", "technique", "do i"]):
+                    elif any(word in query_lower for word in ["how", "form", "technique", "do i", "visual", "example", "show me"]):
+                        # Check if user is asking for multiple examples or just one
+                        num_results = 3 if any(word in query_lower for word in ["visual", "example", "show", "alternatives"]) else 1
+                        
+                        # Extract muscle groups from query
+                        muscle_group_keywords = {
+                            "back": "back",
+                            "chest": "chest",
+                            "legs": "legs",
+                            "leg": "legs",
+                            "shoulders": "shoulders",
+                            "shoulder": "shoulders",
+                            "arms": "arms",
+                            "arm": "arms",
+                            "biceps": "arms",
+                            "triceps": "arms",
+                            "core": "core",
+                            "abs": "core",
+                            "cardio": "cardio"
+                        }
+                        
+                        detected_muscle_groups = []
+                        for keyword, muscle_group in muscle_group_keywords.items():
+                            if keyword in query_lower:
+                                if muscle_group not in detected_muscle_groups:
+                                    detected_muscle_groups.append(muscle_group)
+                        
                         exercises = rag_engine.search_exercises(
                             query=user_input,
                             gym_id=profile.gym_id,
-                            n_results=3
+                            muscle_groups=detected_muscle_groups if detected_muscle_groups else None,
+                            n_results=num_results
                         )
                         
                         if exercises:
-                            ex = exercises[0]
-                            response = llm_handler.generate_exercise_explanation(
-                                exercise_name=ex['name'],
-                                exercise_details=f"Instructions: {ex['instructions']}\nVideo: {ex['video_url']}"
+                            # Build context from retrieved exercises
+                            if len(exercises) == 1:
+                                ex = exercises[0]
+                                context = f"**{ex['name']}**\n\nInstructions: {ex['instructions']}\nVideo: {ex['video_url']}"
+                            else:
+                                # Multiple exercises
+                                context = "Here are relevant exercises:\n\n"
+                                for idx, ex in enumerate(exercises, 1):
+                                    context += f"{idx}. **{ex['name']}**\n"
+                                    context += f"   - Instructions: {ex['instructions']}\n"
+                                    context += f"   - Video: {ex['video_url']}\n\n"
+                            
+                            response = llm_handler.answer_with_exercise_context(
+                                user_question=user_input,
+                                context=context
                             )
+                            
+                            st.markdown(response)
+                            
+                            # Display visual examples
+                            st.markdown("---")
+                            st.markdown("### 📹 Visual Examples")
+                            
+                            for ex in exercises:
+                                st.markdown(f"**{ex['name']}**")
+                                
+                                col1, col2 = st.columns([1, 1])
+                                with col1:
+                                    if ex.get('gif_url'):
+                                        st.image(ex['gif_url'], caption=f"{ex['name']} demonstration", use_container_width=True)
+                                    else:
+                                        st.info("GIF not available")
+                                
+                                with col2:
+                                    st.markdown(f"**Equipment:** {', '.join(ex['equipment'])}")
+                                    st.markdown(f"**Difficulty:** {ex['difficulty'].title()}")
+                                    st.markdown(f"**Muscle Group:** {ex['muscle_group'].title()}")
+                                    st.markdown(f"[📹 Watch Video Tutorial]({ex['video_url']})")
+                                
+                                st.markdown("---")
                         else:
                             response = llm_handler.chat_with_context(
                                 user_message=user_input,
                                 system_context=profile.get_profile_summary()
                             )
+                            st.markdown(response)
                     
                     elif "today" in query_lower or "workout" in query_lower:
                         current_workout = workout_plan['weekly_plan'][st.session_state[SESSION_CURRENT_DAY] - 1]
@@ -435,14 +546,14 @@ Estimated Calories: {current_workout['estimated_calories']} kcal
                             user_message=user_input,
                             system_context=f"{profile.get_profile_summary()}\n{context}"
                         )
+                        st.markdown(response)
                     
                     else:
                         response = llm_handler.chat_with_context(
                             user_message=user_input,
                             system_context=profile.get_profile_summary()
                         )
-                    
-                    st.markdown(response)
+                        st.markdown(response)
                     
                     st.session_state[SESSION_CHAT_HISTORY].append({
                         "role": "assistant",
@@ -467,6 +578,12 @@ Estimated Calories: {current_workout['estimated_calories']} kcal
                         "content": question
                     })
                     st.rerun()
+        st.markdown("---")
+        if st.button("🗑️ Clear Chat History"):
+            st.session_state[SESSION_CHAT_HISTORY] = []
+            llm_handler.clear_memory()
+            st.success("Chat history cleared!")
+            st.rerun()
     
     with tab2:
         st.header("Today's Workout")
@@ -475,43 +592,15 @@ Estimated Calories: {current_workout['estimated_calories']} kcal
             plan = st.session_state[SESSION_WORKOUT_PLAN]
             current_day = st.session_state[SESSION_CURRENT_DAY]
             
-            day_selector_col1, day_selector_col2 = st.columns([3, 1])
-            
-            with day_selector_col1:
-                selected_day = st.selectbox(
-                    "Select Day",
-                    options=list(range(1, plan['total_days'] + 1)),
-                    index=current_day - 1,
-                    format_func=lambda x: f"Day {x}",
-                    key="day_selector"
-                )
-                st.session_state[SESSION_CURRENT_DAY] = selected_day
-            
-            with day_selector_col2:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("Mark Day Complete", type="primary"):
-                    log = WorkoutLog(
-                        log_id=str(uuid.uuid4()),
-                        user_id=profile.user_id,
-                        date=datetime.now(),
-                        day_number=selected_day,
-                        exercises_completed=list(st.session_state.completed_exercises_today),
-                        total_exercises=len(workout['exercises']),
-                        duration_minutes=workout['estimated_duration'],
-                        calories_burned=workout['estimated_calories']
-                    )
-                    log.save_to_file(WORKOUT_LOGS_FILE)
-                    
-                    profile.total_workouts += 1
-                    profile.current_streak += 1
-                    profile.last_workout_date = datetime.now().isoformat()
-                    profile.save_to_file(USER_PROFILES_FILE)
-                    st.session_state[SESSION_USER_PROFILE] = profile
-                    
-                    st.session_state.completed_exercises_today = set()
-                    st.success("🎉 Workout completed! Great job!")
-                    st.balloons()
-                    st.rerun()
+            # Day selector
+            selected_day = st.selectbox(
+                "Select Day",
+                options=list(range(1, plan['total_days'] + 1)),
+                index=current_day - 1,
+                format_func=lambda x: f"Day {x}",
+                key="day_selector"
+            )
+            st.session_state[SESSION_CURRENT_DAY] = selected_day
             
             workout = plan['weekly_plan'][selected_day - 1]
             
@@ -524,6 +613,70 @@ Estimated Calories: {current_workout['estimated_calories']} kcal
                 st.metric("Est. Duration", f"{workout['estimated_duration']} min")
             with col3:
                 st.metric("Est. Calories", f"{workout['estimated_calories']} kcal")
+            
+            st.markdown("---")
+            
+            # Mark Day Complete button
+            if st.button("✅ Mark Day Complete", type="primary", use_container_width=True):
+                # Create workout log
+                log = WorkoutLog(
+                    log_id=str(uuid.uuid4()),
+                    user_id=profile.user_id,
+                    date=datetime.now(),
+                    day_number=selected_day,
+                    exercises_completed=list(st.session_state.completed_exercises_today),
+                    total_exercises=len(workout['exercises']),
+                    duration_minutes=workout['estimated_duration'],
+                    calories_burned=workout['estimated_calories']
+                )
+                log.save_to_file(WORKOUT_LOGS_FILE)
+                
+                # Update profile
+                profile.total_workouts += 1
+                profile.current_streak += 1
+                profile.last_workout_date = datetime.now().isoformat()
+                profile.save_to_file(USER_PROFILES_FILE)
+                st.session_state[SESSION_USER_PROFILE] = profile
+                
+                # Update gamification
+                total_sets = sum(ex.get('sets', 3) for ex in workout['exercises'])
+                total_reps = sum(ex.get('sets', 3) * ex.get('reps', 10) for ex in workout['exercises'])
+                
+                gamification_result = gamification.update_workout_completion(
+                    user_id=profile.user_id,
+                    exercises_completed=len(workout['exercises']),
+                    total_sets=total_sets,
+                    total_reps=total_reps
+                )
+                
+                # Save workout intensity for recovery tracking
+                workout_data = {
+                    'total_sets': total_sets,
+                    'total_reps': total_reps,
+                    'muscle_groups': workout['muscle_groups']
+                }
+                intensity = recovery.calculate_intensity(workout_data, profile.experience_level)
+                recovery.save_workout_intensity(profile.user_id, intensity)
+                
+                # Show success message
+                st.success("🎉 Workout completed! Great job!")
+                
+                # Show XP gained
+                xp_result = gamification_result['xp_result']
+                if xp_result['leveled_up']:
+                    st.balloons()
+                    st.success(f"🎊 LEVEL UP! You're now Level {xp_result['new_level']}!")
+                
+                st.info(f"💫 +{xp_result['xp_gained']} XP earned!")
+                
+                # Show newly unlocked achievements
+                if gamification_result['newly_unlocked']:
+                    st.markdown("### 🏆 New Achievements Unlocked!")
+                    for ach in gamification_result['newly_unlocked']:
+                        st.markdown(f"**{ach.icon} {ach.name}** - {ach.description}")
+                
+                st.session_state.completed_exercises_today = set()
+                st.rerun()
             
             st.markdown("---")
             
@@ -588,6 +741,485 @@ Estimated Calories: {current_workout['estimated_calories']} kcal
             st.warning("No workout plan generated yet!")
     
     with tab3:
+        st.header("🗺️ Your Muscle Coverage")
+        
+        # Get recovery status for each muscle group
+        muscle_status = recovery.get_muscle_recovery_status(profile.user_id)
+        
+        # Calculate coverage score
+        coverage = calculate_coverage_score(muscle_status)
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Display heatmap
+            svg = generate_muscle_heatmap_svg(muscle_status)
+            import streamlit.components.v1 as components
+            components.html(svg, height=650, scrolling=False)
+        
+        with col2:
+            # Coverage score
+            st.markdown(f'''
+            <div class="stat-card">
+                <p>Weekly Coverage</p>
+                <h3>{coverage}%</h3>
+            </div>
+            ''', unsafe_allow_html=True)
+            
+            st.markdown("### Muscle Groups Status")
+            
+            for muscle, status in muscle_status.items():
+                days = status['days_since_workout']
+                color_map = {
+                    "red": "Recently worked",
+                    "orange": "Recovering",
+                    "yellow": "Ready to train",
+                    "blue": "Needs attention"
+                }
+                
+                badge_class = "primary" if status['color'] == "red" else "warning" if status['color'] in ["orange", "yellow"] else "success"
+                
+                st.markdown(f'''
+                <div class="custom-card">
+                    <strong>{muscle.title()}</strong><br/>
+                    <span class="badge badge-{badge_class}">{color_map.get(status['color'], 'Unknown')}</span><br/>
+                    <small>{days} days since last workout</small>
+                </div>
+                ''', unsafe_allow_html=True)
+            
+            # AI recommendations
+            st.markdown("---")
+            st.markdown("### 🤖 AI Recommendations")
+            
+            # Find neglected muscles
+            neglected = [m for m, s in muscle_status.items() if s['days_since_workout'] > 6]
+            
+            if neglected:
+                st.info(f"💡 Focus on: {', '.join([m.title() for m in neglected])}")
+                
+                if st.button("Get Workout Plan for Neglected Muscles"):
+                    # Generate workout for neglected muscles
+                    with st.spinner("Creating personalized workout..."):
+                        exercises = rag_engine.search_exercises(
+                            query=f"{' '.join(neglected)} workout",
+                            gym_id=profile.gym_id,
+                            muscle_groups=neglected,
+                            n_results=5
+                        )
+                        
+                        st.success("**Recommended Exercises:**")
+                        for ex in exercises[:3]:
+                            st.markdown(f"- **{ex['name']}** ({ex['muscle_group']})")
+            else:
+                st.success("✅ Great balance! All muscle groups trained recently.")
+    
+    with tab4:
+        st.header("📚 Exercise Library")
+        
+        # Filters
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            filter_muscle = st.multiselect(
+                "Muscle Groups",
+                ["chest", "back", "shoulders", "arms", "legs", "core", "cardio"],
+                default=[]
+            )
+        
+        with col2:
+            filter_difficulty = st.selectbox(
+                "Difficulty",
+                ["All", "beginner", "intermediate", "advanced"]
+            )
+        
+        with col3:
+            search_query = st.text_input("🔍 Search exercises", placeholder="e.g., bench press")
+        
+        # Get exercises
+        all_exercises = rag_engine.exercises_data
+        
+        # Apply filters
+        filtered = all_exercises
+        
+        if filter_muscle:
+            filtered = [ex for ex in filtered if ex['muscle_group'] in filter_muscle]
+        
+        if filter_difficulty != "All":
+            filtered = [ex for ex in filtered if ex['difficulty'] == filter_difficulty]
+        
+        if search_query:
+            filtered = [ex for ex in filtered if search_query.lower() in ex['name'].lower()]
+        
+        st.markdown(f"**Found {len(filtered)} exercises**")
+        
+        # Display exercises in grid
+        cols_per_row = 3
+        for i in range(0, len(filtered), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j, col in enumerate(cols):
+                if i + j < len(filtered):
+                    ex = filtered[i + j]
+                    with col:
+                        with st.expander(f"**{ex['name']}**", expanded=False):
+                            if ex.get('gif_url'):
+                                st.image(ex['gif_url'], use_container_width=True)
+                            
+                            st.markdown(f"**Muscle:** {ex['muscle_group'].title()}")
+                            st.markdown(f"**Difficulty:** {ex['difficulty'].title()}")
+                            st.markdown(f"**Equipment:** {', '.join(ex['equipment'])}")
+                            st.markdown(f"**Instructions:**")
+                            st.write(ex['instructions'])
+                            st.markdown(f"[📹 Watch Tutorial]({ex['video_url']})")
+    
+    with tab5:
+        st.header("🍽️ Your Personalized Diet Plan")
+        
+        # Import diet generator
+
+        from src.diet_generator import DietGenerator, NutritionProfile
+        import json
+        
+        try:
+            with open(DATA_DIR / "meals.json", 'r') as f:
+                meals_data = json.load(f)['meals']
+            diet_gen = DietGenerator(meals_data)
+        except FileNotFoundError:
+            st.error("Meals database not found. Please ensure meals.json exists in the data directory.")
+            st.stop()
+    
+        # Check if user has diet plan
+        if 'diet_plan' not in st.session_state:
+            st.session_state.diet_plan = None
+    
+        if st.session_state.diet_plan is None:
+            st.info("📋 Let's create your personalized diet plan!")
+
+            # Show benefits
+            st.markdown("""
+                ### Why Create a Diet Plan?
+                - 🎯 Personalized calorie and macro targets
+                - 🍽️ Meal recommendations for your fitness goal
+                - 🛒 Automatic shopping lists
+                - 📊 Track your nutrition alongside workouts
+            """)
+        
+            st.markdown("---")
+        
+            with st.form("diet_profile_form"):
+                st.markdown("### Enter Your Details")
+                col1, col2 = st.columns(2)
+            
+                with col1:
+                    weight_kg = st.number_input("Weight (kg)", min_value=40, max_value=200, value=70)
+                    height_cm = st.number_input("Height (cm)", min_value=140, max_value=220, value=170)
+                    age = st.number_input("Age", min_value=18, max_value=80, value=30)
+            
+                with col2:
+                    gender = st.selectbox("Gender", ["male", "female"])
+                    activity_level = st.selectbox(
+                        "Activity Level",
+                    options=["sedentary", "light", "moderate", "very_active", "extra_active"],
+                    format_func=lambda x: {
+                        "sedentary": "Sedentary (little/no exercise)",
+                        "light": "Light (1-3 days/week)",
+                        "moderate": "Moderate (3-5 days/week)",
+                        "very_active": "Very Active (6-7 days/week)",
+                        "extra_active": "Extra Active (athlete/physical job)"
+                    }[x],
+                    index=2
+                )
+                    days = st.slider("Diet Plan Duration (days)", 1, 14, 7)
+            
+                submitted = st.form_submit_button("Generate Diet Plan", type="primary", use_container_width=True)
+            
+            if submitted:
+                with st.spinner("Creating your personalized diet plan..."):
+                    try:
+                        # Calculate nutrition profile
+                        nutrition_profile = diet_gen.calculate_nutrition_profile(
+                            weight_kg=weight_kg,
+                            height_cm=height_cm,
+                            age=age,
+                            gender=gender,
+                            fitness_goal=profile.fitness_goal,
+                            activity_level=activity_level
+                        )
+                    
+                        # Generate meal plan
+                        diet_plan = diet_gen.generate_meal_plan(
+                            nutrition_profile=nutrition_profile,
+                            fitness_goal=profile.fitness_goal,
+                            days=days
+                        )
+                    
+                        st.session_state.diet_plan = diet_plan
+                        st.success("✅ Diet plan created!")
+                        st.balloons()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error generating diet plan: {str(e)}")
+                        st.info("Please check that meals.json is properly formatted.")
+    
+        else:
+                diet_plan = st.session_state.diet_plan
+                nutrition = diet_plan['nutrition_profile']
+        
+                # Display nutrition targets
+                st.markdown("### 🎯 Your Daily Nutrition Targets")
+
+                st.markdown(f"""
+                <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                    padding: 1rem; border-radius: 10px; color: white; margin-bottom: 1rem;'>
+                    <p style='margin: 0; text-align: center;'>
+                    Based on your profile: <strong>{profile.fitness_goal.replace('_', ' ').title()}</strong>
+                </p>
+                </div>
+                """, unsafe_allow_html=True)
+
+
+
+                col1, col2, col3, col4, col5 = st.columns(5)
+        
+                with col1:
+                    st.metric("🔥 Calories", f"{nutrition['calories']} kcal")
+                with col2:
+                    st.metric("🥩 Protein", f"{nutrition['protein']}g")
+                with col3:
+                    st.metric("🍞 Carbs", f"{nutrition['carbs']}g")
+                with col4:
+                    st.metric("🥑 Fats", f"{nutrition['fats']}g")
+                with col5:
+                    st.metric("🌾 Fiber", f"{nutrition['fiber']}g")
+        
+                st.markdown("---")
+        
+                # Day selector
+                st.markdown("### 📅 Select Day")
+                selected_day = st.selectbox(
+                    "Choose a day",
+                    options=list(range(1, len(diet_plan['weekly_plan']) + 1)),
+                    format_func=lambda x: f"Day {x}",
+                    key="diet_day_selector"
+                )
+        
+                day_plan = diet_plan['weekly_plan'][selected_day - 1]
+        
+                st.markdown(f"## Day {day_plan['day']} Meal Plan")
+        
+                # Display daily totals
+                totals = day_plan['totals']
+                col1, col2, col3, col4 = st.columns(4)
+        
+                with col1:
+                    diff_cal = totals['calories'] - nutrition['calories']
+                    st.metric("Total Calories", f"{totals['calories']} kcal", 
+                     delta=f"{diff_cal:+d} kcal")
+                with col2:
+                    diff_protein = totals['protein'] - nutrition['protein']
+                    st.metric("Protein", f"{totals['protein']}g",
+                     delta=f"{diff_protein:+d}g")
+                with col3:
+                    diff_carbs = totals['carbs'] - nutrition['carbs']
+                    st.metric("Carbs", f"{totals['carbs']}g",
+                     delta=f"{diff_carbs:+d}g")
+                with col4:
+                    diff_fats = totals['fats'] - nutrition['fats']
+                    st.metric("Fats", f"{totals['fats']}g",
+                     delta=f"{diff_fats:+d}g")
+        
+                st.markdown("---")
+        
+                # Display meals
+                st.markdown("### Today's Meals")
+                for idx, meal in enumerate(day_plan['meals'], 1):
+                    with st.expander(f"🍽️ {meal['category'].title()}: {meal['name']}", expanded=True):
+                        col1, col2 = st.columns([1, 2])
+                
+                        with col1:
+                            if meal.get('image_url'):
+                                st.image(meal['image_url'], use_container_width=True)
+                    
+                            st.markdown(f"**⏱️ Prep Time:** {meal['prep_time']} min")
+                            st.markdown(f"**🎚️ Difficulty:** {meal['difficulty'].title()}")
+                
+                        with col2:
+                            st.markdown(f"**📝 Description:** {meal['description']}")
+                    
+                            # Macros
+                            macro_col1, macro_col2, macro_col3, macro_col4 = st.columns(4)
+                            with macro_col1:
+                                st.metric("Calories", f"{meal['calories']} kcal")
+                            with macro_col2:
+                                st.metric("Protein", f"{meal['protein']}g")
+                            with macro_col3:
+                                st.metric("Carbs", f"{meal['carbs']}g")
+                            with macro_col4:
+                                st.metric("Fats", f"{meal['fats']}g")
+                    
+                            # Ingredients
+                            st.markdown("**🛒 Ingredients:**")
+                            for ingredient in meal['ingredients']:
+                                st.markdown(f"- {ingredient}")
+                    
+                            # Swap meal button
+                            if st.button(f"🔄 Swap Meal", key=f"swap_meal_{selected_day}_{idx}"):
+                                with st.spinner("Finding alternative..."):
+                                    try:
+                                        alternative = diet_gen.swap_meal(
+                                            current_meal_id=meal['id'],
+                                            category=meal['category'],
+                                            fitness_goal=profile.fitness_goal,
+                                            target_calories=meal['calories']
+                                        )
+                                        if alternative:
+                                            st.success(f"Try: **{alternative['name']}** ({alternative['calories']} kcal)")
+                                            st.markdown(f"*{alternative['description']}*")
+                                        else:
+                                            st.info("No suitable alternatives found for this meal.")
+                                    except Exception as e:
+                                        st.error(f"Error finding alternatives: {str(e)}")
+        
+                st.markdown("---")
+        
+                # Shopping list
+                with st.expander("🛒 Shopping List for This Week", expanded=False):
+                    try:
+                        shopping_list = diet_gen.generate_shopping_list(diet_plan)
+                        st.markdown(f"**Total Items: {len(shopping_list)}**")
+                        st.markdown("---")
+                        cols = st.columns(3)
+                        for idx, item in enumerate(shopping_list):
+                            with cols[idx % 3]:
+                                st.markdown(f"- {item}")
+                    except Exception as e:
+                        st.error(f"Error generating shopping list: {str(e)}")
+        
+                # Action buttons
+                st.markdown("---")
+                col1, col2, col3 = st.columns(3)
+        
+                with col1:
+                    if st.button("🔄 Regenerate Diet Plan", type="secondary", use_container_width=True):
+                        st.session_state.diet_plan = None
+                        st.rerun()
+        
+                with col2:
+                    if st.button("💬 Ask Nutritionist AI", type="primary", use_container_width=True):
+                        st.session_state.quick_question_triggered = "Can you explain my diet plan and give me nutrition tips?"
+                        st.rerun()
+        
+                with col3:
+                    if st.button("📥 Download Plan", type="secondary", use_container_width=True):
+                        import json
+                        plan_json = json.dumps(diet_plan, indent=2)
+                        st.download_button(
+                            label="Download as JSON",
+                            data=plan_json,
+                            file_name=f"diet_plan_{profile.name}_{selected_day}.json",
+                            mime="application/json"
+                )
+    
+    
+    with tab6:
+        st.header("🏆 Achievements & Progress")
+        
+        # Get user stats
+        stats = gamification.get_user_stats(profile.user_id)
+        level_progress = gamification.get_level_progress(stats)
+        
+        # Top stats row
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown(f'''
+            <div class="stat-card">
+                <p>Level</p>
+                <h3>{stats.level}</h3>
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f'''
+            <div class="stat-card">
+                <p>Total XP</p>
+                <h3>{stats.xp}</h3>
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f'''
+            <div class="stat-card">
+                <p>Streak</p>
+                <h3>{stats.current_streak} 🔥</h3>
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown(f'''
+            <div class="stat-card">
+                <p>Achievements</p>
+                <h3>{stats.achievements_unlocked}</h3>
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        # Level progress
+        st.markdown("### Level Progress")
+        progress_pct = level_progress['progress_percentage']
+        st.markdown(f'''
+        <div class="custom-progress">
+            <div class="custom-progress-bar" style="width: {progress_pct}%"></div>
+        </div>
+        <p style="text-align: center; margin-top: 0.5rem;">
+            {level_progress['xp_in_level']} / {level_progress['xp_for_next_level']} XP to Level {stats.level + 1}
+        </p>
+        ''', unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Achievements
+        st.markdown("### 🏅 Your Achievements")
+        
+        achievements = gamification.get_achievements(profile.user_id)
+        
+        # Group by category
+        categories = {}
+        for ach in achievements:
+            if ach.category not in categories:
+                categories[ach.category] = []
+            categories[ach.category].append(ach)
+        
+        for category, achs in categories.items():
+            st.markdown(f"#### {category.title()} Achievements")
+            
+            for ach in achs:
+                unlocked_class = "unlocked" if ach.unlocked else ""
+                
+                # Determine progress display
+                if ach.category == "workout":
+                    progress_val = stats.total_workouts
+                elif ach.category == "streak":
+                    progress_val = stats.current_streak
+                elif "sets" in ach.id:
+                    progress_val = stats.total_sets
+                elif "reps" in ach.id:
+                    progress_val = stats.total_reps
+                else:
+                    progress_val = 0
+                
+                unlock_text = f"Unlocked {ach.unlocked_date[:10]}" if ach.unlocked else f"Progress: {progress_val}/{ach.requirement}"
+                
+                st.markdown(f'''
+                <div class="achievement-card {unlocked_class}">
+                    <div class="achievement-icon">{ach.icon}</div>
+                    <div style="flex: 1;">
+                        <strong>{ach.name}</strong><br/>
+                        <small>{ach.description}</small><br/>
+                        <small style="opacity: 0.7;">{unlock_text}</small>
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
+    
+    with tab7:
         st.header("Your Progress")
         
         logs = WorkoutLog.load_user_logs(WORKOUT_LOGS_FILE, profile.user_id)
@@ -678,7 +1310,7 @@ Estimated Calories: {current_workout['estimated_calories']} kcal
             </div>
             """, unsafe_allow_html=True)
     
-    with tab4:
+    with tab8:
         st.header("Recommended Supplements")
         
         supplements = rag_engine.get_supplements_for_goal(profile.fitness_goal)
